@@ -95,6 +95,10 @@ CImage::CImage(const Vector2D& viewport_, COutput* output_, const std::string& r
 
     angle = angle * M_PI / 180.0;
 
+    if (path.empty() and !reloadCommand.empty()) {
+        onTimerUpdate();
+    }
+
     plantTimer();
 }
 
