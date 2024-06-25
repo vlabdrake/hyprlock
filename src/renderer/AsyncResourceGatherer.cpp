@@ -116,6 +116,47 @@ enum class FileType {
     UNKNOWN,
 };
 
+cairo_surface_t* createSurface(const std::filesystem::path& path) {
+    // determine the file type
+    std::string ext = path.extension().string();
+    // convert the extension to lower case
+    std::transform(ext.begin(), ext.end(), ext.begin(), [](char c) { return c <= 'Z' && c >= 'A' ? c - ('Z' - 'z') : c; });
+
+    FileType ft = FileType::UNKNOWN;
+    Debug::log(WARN, "Extension: {}", ext);
+    if (ext == ".png")
+        ft = FileType::PNG;
+    else if (ext == ".jpg" || ext == ".jpeg")
+        ft = FileType::JPEG;
+    else if (ext == ".webp")
+        ft = FileType::WEBP;
+    else {
+        // magic is slow, so only use it when no recognized extension is found
+        auto handle = magic_open(MAGIC_NONE | MAGIC_COMPRESS);
+        magic_load(handle, nullptr);
+
+        const auto type_str   = std::string(magic_file(handle, path.c_str()));
+        const auto first_word = type_str.substr(0, type_str.find(" "));
+        magic_close(handle);
+
+        if (first_word == "PNG")
+            ft = FileType::PNG;
+        else if (first_word == "JPEG")
+            ft = FileType::JPEG;
+        else if (first_word == "RIFF" && type_str.find("Web/P image") != std::string::npos)
+            ft = FileType::WEBP;
+    }
+
+    cairo_surface_t* CAIROISURFACE = nullptr;
+    switch (ft) {
+        case FileType::PNG: CAIROISURFACE = cairo_image_surface_create_from_png(path.c_str()); break;
+        case FileType::JPEG: CAIROISURFACE = JPEG::createSurfaceFromJPEG(path); break;
+        case FileType::WEBP: CAIROISURFACE = WEBP::createSurfaceFromWEBP(path); break;
+        default: Debug::log(ERR, "unrecognized image format of {}", path.c_str()); break;
+    }
+    return CAIROISURFACE;
+}
+
 void CAsyncResourceGatherer::gather() {
     const auto CWIDGETS = g_pConfigManager->getWidgetConfigs();
 
@@ -145,44 +186,7 @@ void CAsyncResourceGatherer::gather() {
             std::string           id = (c.type == "background" ? std::string{"background:"} : std::string{"image:"}) + path;
             std::filesystem::path ABSOLUTEPATH(absolutePath(path, ""));
 
-            // determine the file type
-            std::string ext = ABSOLUTEPATH.extension().string();
-            // convert the extension to lower case
-            std::transform(ext.begin(), ext.end(), ext.begin(), [](char c) { return c <= 'Z' && c >= 'A' ? c - ('Z' - 'z') : c; });
-
-            FileType ft = FileType::UNKNOWN;
-            Debug::log(WARN, "Extension: {}", ext);
-            if (ext == ".png")
-                ft = FileType::PNG;
-            else if (ext == ".jpg" || ext == ".jpeg")
-                ft = FileType::JPEG;
-            else if (ext == ".webp")
-                ft = FileType::WEBP;
-            else {
-                // magic is slow, so only use it when no recognized extension is found
-                auto handle = magic_open(MAGIC_NONE | MAGIC_COMPRESS);
-                magic_load(handle, nullptr);
-
-                const auto type_str   = std::string(magic_file(handle, ABSOLUTEPATH.c_str()));
-                const auto first_word = type_str.substr(0, type_str.find(" "));
-                magic_close(handle);
-
-                if (first_word == "PNG")
-                    ft = FileType::PNG;
-                else if (first_word == "JPEG")
-                    ft = FileType::JPEG;
-                else if (first_word == "RIFF" && type_str.find("Web/P image") != std::string::npos)
-                    ft = FileType::WEBP;
-            }
-
-            // preload bg img
-            cairo_surface_t* CAIROISURFACE = nullptr;
-            switch (ft) {
-                case FileType::PNG: CAIROISURFACE = cairo_image_surface_create_from_png(ABSOLUTEPATH.c_str()); break;
-                case FileType::JPEG: CAIROISURFACE = JPEG::createSurfaceFromJPEG(ABSOLUTEPATH); break;
-                case FileType::WEBP: CAIROISURFACE = WEBP::createSurfaceFromWEBP(ABSOLUTEPATH); break;
-                default: Debug::log(ERR, "unrecognized image format of {}", path.c_str()); continue;
-            }
+            cairo_surface_t*      CAIROISURFACE = createSurface(path);
 
             if (CAIROISURFACE == nullptr)
                 continue;
@@ -259,7 +263,7 @@ void CAsyncResourceGatherer::renderImage(const SPreloadRequest& rq) {
     target.id   = rq.id;
 
     const auto ABSOLUTEPATH  = absolutePath(rq.asset, "");
-    const auto CAIROISURFACE = cairo_image_surface_create_from_png(ABSOLUTEPATH.c_str());
+    const auto CAIROISURFACE = createSurface(ABSOLUTEPATH);
 
     const auto CAIRO = cairo_create(CAIROISURFACE);
     cairo_scale(CAIRO, 1, 1);
